@@ -12,7 +12,7 @@ load_dotenv()
 # ==========================================
 
 def is_sum_in_range(numbers, min_sum=90, max_sum=170):
-    """【和の範囲】 合計値 90〜170"""
+    """【和の範囲】 7つの数字の合計が90〜170の範囲内か"""
     return min_sum <= sum(numbers) <= max_sum
 
 def is_odd_even_balanced(numbers, allowed_ratios=[(3, 4), (4, 3), (2, 5), (5, 2)]):
@@ -53,23 +53,31 @@ def validate_combination(numbers):
 # Gemini 予測生成メイン処理
 # ==========================================
 
-def generate_predictions():
-    # Streamlit Secrets または .env から APIキーを取得
-    api_key = os.getenv("GEMINI_API_KEY")
+def generate_predictions(df=None, api_key=None, *args, **kwargs):
+    """
+    Gemini APIを使用してロト7の予測を生成するメイン関数。
+    Streamlit (app.py) および CLI (run.py) の両方の呼び出しに対応。
+    """
+    # APIキーの取得（引数 > Streamlit Secrets > .env の順で検索）
     if not api_key:
         try:
             import streamlit as st
-            api_key = st.secrets["GEMINI_API_KEY"]
+            api_key = st.secrets.get("GEMINI_API_KEY")
         except Exception:
             pass
+
+    if not api_key:
+        api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
         raise ValueError("GEMINI_API_KEY が設定されていません。.env または Streamlit Secrets を確認してください。")
 
     client = genai.Client(api_key=api_key)
     
-    # 過去データの取得
-    df = fetch_data()
+    # 過去データが渡されていない場合は自動取得
+    if df is None:
+        df = fetch_data()
+
     recent_df = df.tail(10)
     latest_draw_num = len(df)
     next_draw_num = latest_draw_num + 1
@@ -112,7 +120,6 @@ def generate_predictions():
     
     for line in lines:
         if "買い目" in line and "[" in line and "]" in line:
-            # 抽出処理
             match = re.search(r'\[(.*?)\]', line)
             if match:
                 try:
