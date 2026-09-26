@@ -1,22 +1,23 @@
 import os
 import json
+import time
 from dotenv import load_dotenv, find_dotenv
 from google import genai
 from analyzer import Loto7Analyzer
 
-# 上の階層も含めて自動的に .env を検索して読み込み
-load_dotenv(find_dotenv(usecwd=True))
+def generate_predictions(analysis_summary=None, api_key=None):
+    # 1. APIキーの取得
+    if not api_key:
+        load_dotenv(find_dotenv(usecwd=True))
+        api_key = os.getenv("GEMINI_API_KEY")
 
-API_KEY = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError(".env ファイルまたは Streamlit Secrets に GEMINI_API_KEY が見つかりませんでした。")
 
-if not API_KEY:
-    raise ValueError(".env ファイルに GEMINI_API_KEY が見つかりませんでした。PROJECT WINDMILL 直下に .env があるか確認してください。")
+    # Gemini クライアントの初期化
+    client = genai.Client(api_key=api_key)
 
-# Gemini クライアントの初期化
-client = genai.Client(api_key=API_KEY)
-
-def generate_loto7_predictions():
-    # 1. analyzer.py から最新の分析データを取得
+    # 2. analyzer.py から最新の分析データを取得
     analyzer = Loto7Analyzer()
     scores = analyzer.calculate_number_scores(span=15)
     
@@ -33,7 +34,7 @@ def generate_loto7_predictions():
     last_date = str(last_row["抽選日"])
     next_issue = last_issue + 1
 
-    # 2. Gemini に送るプロンプトの構成
+    # 3. プロンプト作成
     prompt = f"""
 あなたはロト7のデータ分析プロフェッショナルです。
 提供された統計分析データをもとに、次回（第{next_issue}回）の「2〜4等当選」を狙うための最適化された【買い目5パターン】を提案してください。
@@ -68,27 +69,24 @@ def generate_loto7_predictions():
    - 今回選定した組み合わせの期待値とポイント
 """
 
-    print(f"Gemini API に第{next_issue}回の予測用データを送信中...")
+    # 4. API呼び出し（503エラー対策のリトライ付き）
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"Gemini API 送信中... (試行 {attempt}/{max_retries})")
+            response = client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=prompt,
+            )
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-        )
+            output_filename = f"prediction_issue_{next_issue}.txt"
+            with open(output_filename, "w", encoding="utf-8") as f:
+                f.write(response.text)
 
-        print("\n" + "=" * 50)
-        print(response.text)
-        print("=" * 50)
+            return response.text
 
-        # 結果をテキストファイルとしても自動保存
-        output_filename = f"prediction_issue_{next_issue}.txt"
-        with open(output_filename, "w", encoding="utf-8") as f:
-            f.write(response.text)
-        print(f"\n生成結果を '{output_filename}' に保存しました。")
-
-    except Exception as e:
-        print(f"Gemini API 呼び出し中にエラーが発生しました: {e}")
-
-
-if __name__ == "__main__":
-    generate_loto7_predictions()
+        except Exception as e:
+            if "503" in str(e) and attempt < max_retries:
+                time.sleep(3)  # 503が出たら3秒待ってリトライ
+                continue
+            raise RuntimeError(f"Gemini API 呼び出しエラー: {e}")

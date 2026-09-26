@@ -12,7 +12,7 @@ CSV_URLS = [
 CSV_FILE = "loto7_data.csv"
 
 
-def fetch_loto7_csv():
+def fetch_data():
     print("mk-mode.com から LOTO7_ALL.csv を直接取得中...")
 
     headers = {
@@ -52,7 +52,6 @@ def fetch_loto7_csv():
     print(f"取得件数: {len(df_raw)}件")
 
     # 列名の自動マッピングと整形
-    # mk-modeのCSV列名に対応
     cols = [str(c).strip() for c in df_raw.columns]
     df_raw.columns = cols
 
@@ -111,13 +110,8 @@ def fetch_loto7_csv():
     print(f"\n成功: 全{len(df)}件のデータを '{CSV_FILE}' に保存しました！")
     print(f"取得範囲: 第{df['回数'].min()}回 〜 第{df['回数'].max()}回")
 
-    print("\n【第1回〜第3回】")
-    print(df.head(3).to_string(index=False))
-    print("\n【最新3回】")
-    print(df.tail(3).to_string(index=False))
-
     return df
 
 
 if __name__ == "__main__":
-    fetch_loto7_csv()
+    fetch_data()
