@@ -1,0 +1,7 @@
+# キャッシュ・自動生成ファイルの除外
+__pycache__/
+*.pyc
+prediction_issue_*.txt
+
+# 環境変数（念のため設定）
+.env
