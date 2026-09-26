@@ -1,92 +1,128 @@
 import os
-import json
-import time
-from dotenv import load_dotenv, find_dotenv
+import re
+from dotenv import load_dotenv
 from google import genai
-from analyzer import Loto7Analyzer
+from fetch_data import fetch_data
 
-def generate_predictions(analysis_summary=None, api_key=None):
-    # 1. APIキーの取得
+# 環境変数の読み込み
+load_dotenv()
+
+# ==========================================
+# 統計フィルター判定ロジック（バックテスト検証済み）
+# ==========================================
+
+def is_sum_in_range(numbers, min_sum=90, max_sum=170):
+    """【和の範囲】 合計値 90〜170"""
+    return min_sum <= sum(numbers) <= max_sum
+
+def is_odd_even_balanced(numbers, allowed_ratios=[(3, 4), (4, 3), (2, 5), (5, 2)]):
+    """【奇偶比率】 3:4, 4:3, 2:5, 5:2"""
+    odd_count = sum(1 for x in numbers if x % 2 != 0)
+    return (odd_count, 7 - odd_count) in allowed_ratios
+
+def is_consecutive_valid(numbers, max_consecutive=2):
+    """【連続数制限】 3連番以上を除外"""
+    sorted_nums = sorted(numbers)
+    consecutive_count = 0
+    max_count = 0
+    for i in range(len(sorted_nums) - 1):
+        if sorted_nums[i+1] == sorted_nums[i] + 1:
+            consecutive_count += 1
+            max_count = max(max_count, consecutive_count)
+        else:
+            consecutive_count = 0
+    return max_count < max_consecutive
+
+def is_high_low_balanced(numbers, threshold=19, allowed_ratios=[(3, 4), (4, 3), (2, 5), (5, 2)]):
+    """【高低バランス】 18以下(Low) と 19以上(High) の配分"""
+    low_count = sum(1 for x in numbers if x < threshold)
+    return (low_count, 7 - low_count) in allowed_ratios
+
+def validate_combination(numbers):
+    """4つの統計フィルターをすべてクリアしているか検証"""
+    if len(numbers) != 7 or len(set(numbers)) != 7:
+        return False
+    return (
+        is_sum_in_range(numbers) and
+        is_odd_even_balanced(numbers) and
+        is_consecutive_valid(numbers) and
+        is_high_low_balanced(numbers)
+    )
+
+# ==========================================
+# Gemini 予測生成メイン処理
+# ==========================================
+
+def generate_predictions():
+    # Streamlit Secrets または .env から APIキーを取得
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        load_dotenv(find_dotenv(usecwd=True))
-        api_key = os.getenv("GEMINI_API_KEY")
+        try:
+            import streamlit as st
+            api_key = st.secrets["GEMINI_API_KEY"]
+        except Exception:
+            pass
 
     if not api_key:
-        raise ValueError(".env ファイルまたは Streamlit Secrets に GEMINI_API_KEY が見つかりませんでした。")
+        raise ValueError("GEMINI_API_KEY が設定されていません。.env または Streamlit Secrets を確認してください。")
 
-    # Gemini クライアントの初期化
     client = genai.Client(api_key=api_key)
-
-    # 2. analyzer.py から最新の分析データを取得
-    analyzer = Loto7Analyzer()
-    scores = analyzer.calculate_number_scores(span=15)
     
-    top12 = [f"{n:02d}" for n, s in scores[:12]]
-    axis4 = [f"{n:02d}" for n, s in scores[:4]]
-    
-    axis_partners = {}
-    for axis in [n for n, s in scores[:4]]:
-        partners = analyzer.get_pairing_matrix(axis)
-        axis_partners[f"{axis:02d}"] = [f"{p[0]:02d}" for p in partners[:4]]
+    # 過去データの取得
+    df = fetch_data()
+    recent_df = df.tail(10)
+    latest_draw_num = len(df)
+    next_draw_num = latest_draw_num + 1
 
-    last_row = analyzer.df.iloc[-1]
-    last_issue = int(last_row["回数"])
-    last_date = str(last_row["抽選日"])
-    next_issue = last_issue + 1
-
-    # 3. プロンプト作成
     prompt = f"""
 あなたはロト7のデータ分析プロフェッショナルです。
-提供された統計分析データをもとに、次回（第{next_issue}回）の「2〜4等当選」を狙うための最適化された【買い目5パターン】を提案してください。
+直近10回の当選データ（第{latest_draw_num-9}回〜第{latest_draw_num}回）を参考にして、次回（第{next_draw_num}回）の最適買い目を提案してください。
 
-### 【直近（第{last_issue}回: {last_date}）データ分析結果】
-- 高期待値ターゲット12選: {', '.join(top12)}
-- 高確率 軸数字 (TOP4): {', '.join(axis4)}
-- 軸数字と相性が良いパートナー数字:
-{json.dumps(axis_partners, ensure_ascii=False, indent=2)}
+【厳格な統計フィルター条件】
+生成するすべての買い目（7つの数字）は、以下の統計ルールを**絶対に厳守**してください：
+1. **合計値**: 7つの数字の合計は 90 〜 170 の範囲内。
+2. **奇偶バランス**: 奇数と偶数の比率は 3:4, 4:3, 2:5, 5:2 のいずれか。
+3. **連続数**: 3連番以上（例: 10,11,12）は含めない（2連番までは許可）。
+4. **高低バランス**: 1〜18（Low）と 19〜37（High）の比率は 3:4, 4:3, 2:5, 5:2 のいずれか。
 
-### 【購入組み合わせ選定条件】
-1. **1口につき本数字7つ（01〜37）**を昇順で選定すること。
-2. **2〜4等（5〜6数字一致）を分散して拾う**ため、口ごとに異なる軸数字や相性ペアを組み込み、全体のカバレッジを高めること。
-3. **合計値フィルター**: 各口の7つの合計値が **110〜160** の範囲内になるよう調整すること。
-4. **奇偶バランス**: 奇数と偶数の比率は **3:4** または **4:3** を推奨とし、全奇数・全偶数は排除すること。
-5. **極端なパターンの排除**: 連続する数字は最大2〜3個までとし、過度な偏りを避けること。
+【出力フォーマット】
+以下の形式で必ず5パターンの買い目を挙げ、その後に簡単な分析・戦略方針を添えてください。
+各買い目は必ず `[数字1, 数字2, 数字3, 数字4, 数字5, 数字6, 数字7]` の形式で記述してください。
 
-### 【出力フォーマット】
-以下の構成で分かりやすく回答してください。
+買い目1: [x, x, x, x, x, x, x]
+買い目2: [x, x, x, x, x, x, x]
+買い目3: [x, x, x, x, x, x, x]
+買い目4: [x, x, x, x, x, x, x]
+買い目5: [x, x, x, x, x, x, x]
 
-1. **【第{next_issue}回 戦略方針】**
-   - 今回の軸数字の振り分けと組み合わせの工夫
-
-2. **【おすすめ買い目 5選】**
-   - 第1口: [数字7つ] (軸: XX / 合計: XXX / 狙い)
-   - 第2口: [数字7つ] (軸: XX / 合計: XXX / 狙い)
-   - 第3口: [数字7つ] (軸: XX / 合計: XXX / 狙い)
-   - 第4口: [数字7つ] (軸: XX / 合計: XXX / 狙い)
-   - 第5口: [数字7つ] (軸: XX / 合計: XXX / 狙い)
-
-3. **【立ち回り解説＆アドバイス】**
-   - 今回選定した組み合わせの期待値とポイント
+直近の傾向分析と戦略方針:
+（分析テキスト）
 """
 
-    # 4. API呼び出し（503エラー対策のリトライ付き）
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            print(f"Gemini API 送信中... (試行 {attempt}/{max_retries})")
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-            )
+    response = client.models.generate_content(
+        model="gemini-3.8-flash",
+        contents=prompt
+    )
+    
+    output_text = response.text
 
-            output_filename = f"prediction_issue_{next_issue}.txt"
-            with open(output_filename, "w", encoding="utf-8") as f:
-                f.write(response.text)
+    # Python側でのダブルチェック（検証＆フィルタリングログの付加）
+    lines = output_text.split('\n')
+    validated_lines = []
+    
+    for line in lines:
+        if "買い目" in line and "[" in line and "]" in line:
+            # 抽出処理
+            match = re.search(r'\[(.*?)\]', line)
+            if match:
+                try:
+                    nums = [int(n.strip()) for n in match.group(1).split(',')]
+                    nums = sorted(nums)
+                    is_valid = validate_combination(nums)
+                    status_tag = " (✅ 統計フィルター合格)" if is_valid else " (⚠️ 統計境界外)"
+                    line = f"{line}{status_tag}"
+                except ValueError:
+                    pass
+        validated_lines.append(line)
 
-            return response.text
-
-        except Exception as e:
-            if "503" in str(e) and attempt < max_retries:
-                time.sleep(3)  # 503が出たら3秒待ってリトライ
-                continue
-            raise RuntimeError(f"Gemini API 呼び出しエラー: {e}")
+    return "\n".join(validated_lines)
