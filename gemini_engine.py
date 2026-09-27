@@ -72,11 +72,14 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
     if not api_key:
         raise ValueError("GEMINI_API_KEY が設定されていません。.env または Streamlit Secrets を確認してください。")
 
-    client = genai.Client(api_key=api_key)
-    
-    # 過去データが渡されていない場合は自動取得
-    if df is None:
+    # 過去データの安全な補完（dfがNoneまたは空データフレームの場合は自動取得）
+    if df is None or (hasattr(df, 'empty') and df.empty):
         df = fetch_data()
+
+    if df is None or (hasattr(df, 'empty') and df.empty):
+        return "⚠️ 過去データの取得に失敗しました。画面左の「最新当選データの取得」ボタンを押してから再度お試しください。"
+
+    client = genai.Client(api_key=api_key)
 
     recent_df = df.tail(10)
     latest_draw_num = len(df)
