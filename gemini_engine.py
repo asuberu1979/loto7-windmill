@@ -2,6 +2,7 @@ import os
 import re
 from dotenv import load_dotenv
 from google import genai
+from google.genai.errors import APIError, ServerError
 from fetch_data import fetch_data
 
 # 環境変数の読み込み
@@ -69,13 +70,16 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
         api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        raise ValueError("GEMINI_API_KEY が設定されていません。")
+        return "⚠️ GEMINI_API_KEY が設定されていません。Streamlit Secrets または .env を確認してください。"
 
     client = genai.Client(api_key=api_key)
     
     # 過去データが渡されていない場合は自動取得
     if df is None or (hasattr(df, 'empty') and df.empty):
         df = fetch_data()
+
+    if df is None or (hasattr(df, 'empty') and df.empty):
+        return "⚠️ 過去データの取得に失敗しました。画面左の「最新当選データの取得」を押してください。"
 
     latest_draw_num = len(df)
     next_draw_num = latest_draw_num + 1
@@ -105,12 +109,20 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
 （分析テキスト）
 """
 
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=prompt
-    )
-    
-    output_text = response.text
+    # サーバーエラーやリクエスト制限を安全にキャッチ
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+        output_text = response.text
+    except (ServerError, APIError) as e:
+        err_str = str(e)
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+            return "⚠️ APIの利用制限（リクエスト上限）に達しました。1分ほどおいてから再度お試しください。"
+        return f"⚠️ Google AI サーバーで一時的な障害・混雑が発生しています。数秒〜1分ほど置いて再度お試しください。（詳細: {err_str}）"
+    except Exception as e:
+        return f"⚠️ エラーが発生しました: {str(e)}"
 
     # Python側でのダブルチェック
     lines = output_text.split('\n')
