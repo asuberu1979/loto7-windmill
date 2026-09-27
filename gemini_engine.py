@@ -107,12 +107,18 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
 （分析テキスト）
 """
 
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=prompt
-    )
-    
-    output_text = response.text
+    # API呼び出し（利用制限・エラー時のハンドリング付き）
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt
+        )
+        output_text = response.text
+    except Exception as e:
+        error_msg = str(e)
+        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            return "⚠️ APIの利用制限（1分あたりのリクエスト上限）に達しました。\n1分ほど時間をおいてから、再度「予測を実行する」ボタンを押してください。"
+        return f"⚠️ API実行中にエラーが発生しました: {error_msg}"
 
     # Python側でのダブルチェック（検証＆フィルタリングログの付加）
     lines = output_text.split('\n')
