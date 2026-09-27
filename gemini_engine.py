@@ -1,8 +1,8 @@
 import os
 import re
+import json
+import requests
 from dotenv import load_dotenv
-from google import genai
-from google.genai.errors import APIError, ServerError
 from fetch_data import fetch_data
 
 # 環境変数の読み込み
@@ -51,30 +51,28 @@ def validate_combination(numbers):
     )
 
 # ==========================================
-# Gemini 予測生成メイン処理
+# OpenRouter 経由の予測生成メイン処理
 # ==========================================
 
 def generate_predictions(df=None, api_key=None, *args, **kwargs):
     """
-    Gemini APIを使用してロト7の予測を生成するメイン関数。
+    OpenRouter APIを使用してロト7の予測を生成するメイン関数。
     """
-    # APIキーの取得（Streamlit Secrets または .env）
+    # OpenRouter APIキーの取得
     if not api_key:
         try:
             import streamlit as st
-            api_key = st.secrets.get("GEMINI_API_KEY")
+            api_key = st.secrets.get("OPENROUTER_API_KEY")
         except Exception:
             pass
 
     if not api_key:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("OPENROUTER_API_KEY")
 
     if not api_key:
-        return "⚠️ GEMINI_API_KEY が設定されていません。Streamlit Secrets または .env を確認してください。"
+        return "⚠️ OPENROUTER_API_KEY が設定されていません。Streamlit Secrets または .env を確認してください。"
 
-    client = genai.Client(api_key=api_key)
-    
-    # 過去データが渡されていない場合は自動取得
+    # 過去データ自動取得
     if df is None or (hasattr(df, 'empty') and df.empty):
         df = fetch_data()
 
@@ -109,20 +107,34 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
 （分析テキスト）
 """
 
-    # サーバーエラーやリクエスト制限を安全にキャッチ
+    # OpenRouter API エンドポイントの設定
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://streamlit.io",
+        "X-Title": "Loto7 AI Analysis"
+    }
+
+    payload = {
+        "model": "google/gemini-3.8-flash",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
+
     try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt
-        )
-        output_text = response.text
-    except (ServerError, APIError) as e:
-        err_str = str(e)
-        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-            return "⚠️ APIの利用制限（リクエスト上限）に達しました。1分ほどおいてから再度お試しぐださい。"
-        return f"⚠️ Google AI サーバーで一時的な障害・混雑が発生しています。数秒〜1分ほど置いて再度お試しください。（詳細: {err_str}）"
+        response = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+        res_data = response.json()
+
+        if response.status_code != 200:
+            error_msg = res_data.get("error", {}).get("message", response.text)
+            return f"⚠️ OpenRouter API エラー ({response.status_code}): {error_msg}"
+
+        output_text = res_data["choices"][0]["message"]["content"]
+
     except Exception as e:
-        return f"⚠️ エラーが発生しました: {str(e)}"
+        return f"⚠️ 通信エラーが発生しました: {str(e)}"
 
     # Python側でのダブルチェック
     lines = output_text.split('\n')
