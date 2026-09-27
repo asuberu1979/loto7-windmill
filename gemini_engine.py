@@ -8,7 +8,7 @@ from fetch_data import fetch_data
 load_dotenv()
 
 # ==========================================
-# 統計フィルター判定ロジック（バックテスト検証済み）
+# 統計フィルター判定ロジック
 # ==========================================
 
 def is_sum_in_range(numbers, min_sum=90, max_sum=170):
@@ -56,9 +56,8 @@ def validate_combination(numbers):
 def generate_predictions(df=None, api_key=None, *args, **kwargs):
     """
     Gemini APIを使用してロト7の予測を生成するメイン関数。
-    Streamlit (app.py) および CLI (run.py) の両方の呼び出しに対応。
     """
-    # APIキーの取得（引数 > Streamlit Secrets > .env の順で検索）
+    # APIキーの取得（Streamlit Secrets または .env）
     if not api_key:
         try:
             import streamlit as st
@@ -70,18 +69,14 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
         api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
-        raise ValueError("GEMINI_API_KEY が設定されていません。.env または Streamlit Secrets を確認してください。")
+        raise ValueError("GEMINI_API_KEY が設定されていません。")
 
-    # 過去データの安全な補完（dfがNoneまたは空データフレームの場合は自動取得）
+    client = genai.Client(api_key=api_key)
+    
+    # 過去データが渡されていない場合は自動取得
     if df is None or (hasattr(df, 'empty') and df.empty):
         df = fetch_data()
 
-    if df is None or (hasattr(df, 'empty') and df.empty):
-        return "⚠️ 過去データの取得に失敗しました。画面左の「最新当選データの取得」ボタンを押してから再度お試しください。"
-
-    client = genai.Client(api_key=api_key)
-
-    recent_df = df.tail(10)
     latest_draw_num = len(df)
     next_draw_num = latest_draw_num + 1
 
@@ -110,20 +105,14 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
 （分析テキスト）
 """
 
-    # API呼び出し（利用制限・エラー時のハンドリング付き）
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt
-        )
-        output_text = response.text
-    except Exception as e:
-        error_msg = str(e)
-        if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            return "⚠️ APIの利用制限（1分あたりのリクエスト上限）に達しました。\n1分ほど時間をおいてから、再度「予測を実行する」ボタンを押してください。"
-        return f"⚠️ API実行中にエラーが発生しました: {error_msg}"
+    response = client.models.generate_content(
+        model="gemini-3.8-flash",
+        contents=prompt
+    )
+    
+    output_text = response.text
 
-    # Python側でのダブルチェック（検証＆フィルタリングログの付加）
+    # Python側でのダブルチェック
     lines = output_text.split('\n')
     validated_lines = []
     
