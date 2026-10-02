@@ -82,9 +82,24 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
     latest_draw_num = len(df)
     next_draw_num = latest_draw_num + 1
 
+    # 直近10回のデータを文字列として抽出（AIに読ませるため）
+    recent_df = df.tail(10)
+    recent_data_str = recent_df.to_string(index=False)
+
     prompt = f"""
-あなたはロト7のデータ分析プロフェッショナルです。
-直近10回の当選データ（第{latest_draw_num-9}回〜第{latest_draw_num}回）を参考にして、次回（第{next_draw_num}回）の最適買い目を提案してください。
+あなたはロト7の高度なデータ分析プロフェッショナルです。
+以下の「直近10回の当選データ」を深く分析し、次回（第{next_draw_num}回）の最適買い目を5パターン提案してください。
+
+【直近10回の当選データ】
+{recent_data_str}
+
+【予測・選定に関する絶対指示】
+1. **数字の均等分散・パズル配置は絶対禁止です**：
+   全37個の数字を5つの買い目にキレイにバラバラに配置することはしないでください。それはデータ予測ではなくただのパズルです。
+2. **軸数字（ホットナンバー・重み付け）を設定してください**：
+   直近10回で出現頻度が高い数字や、次回出やすいと判断した「強い数字（軸数字）」を数個定めてください。
+3. **買い目間での「数字の重複」を積極的に行ってください**：
+   自信のある軸数字は、買い目1〜5の中で複数のパターンに何度も重複して使用してください。
 
 【厳格な統計フィルター条件】
 生成するすべての買い目（7つの数字）は、以下の統計ルールを**絶対に厳守**してください：
@@ -94,7 +109,7 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
 4. **高低バランス**: 1〜18（Low）と 19〜37（High）の比率は 3:4, 4:3, 2:5, 5:2 のいずれか。
 
 【出力フォーマット】
-以下の形式で必ず5パターンの買い目を挙げ、その後に簡単な分析・戦略方針を添えてください。
+以下の形式で必ず5パターンの買い目を挙げ、その後に選定理由・分析方針を添えてください。
 各買い目は必ず `[数字1, 数字2, 数字3, 数字4, 数字5, 数字6, 数字7]` の形式で記述してください。
 
 買い目1: [x, x, x, x, x, x, x]
@@ -103,8 +118,8 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
 買い目4: [x, x, x, x, x, x, x]
 買い目5: [x, x, x, x, x, x, x]
 
-直近の傾向分析と戦略方針:
-（分析テキスト）
+直近の傾向分析と選定理由:
+（どの数字を軸に設定したか、なぜその数字を重視したかの根拠）
 """
 
     # OpenRouter API エンドポイントの設定
@@ -117,7 +132,7 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
     }
 
     payload = {
-        "model": "google/gemini-3.8-flash",
+        "model": "google/gemini-3.7-flash",
         "messages": [
             {"role": "user", "content": prompt}
         ]
@@ -134,7 +149,7 @@ def generate_predictions(df=None, api_key=None, *args, **kwargs):
         output_text = res_data["choices"][0]["message"]["content"]
 
     except Exception as e:
-        return f"⚠️ 通信エラーが発生しました: {str(e)}"
+        return f"⚠️️ 通信エラーが発生しました: {str(e)}"
 
     # Python側でのダブルチェック
     lines = output_text.split('\n')
