@@ -1,4 +1,17 @@
+"""
+ロト7 過去データの取得・保存
+
+mk-mode.com の静的CSVを取得して loto7_data.csv に保存します。
+  - 取得したデータは検証してから保存します(件数・連番・数字の範囲)。
+    問題があれば、既存のファイルは上書きしません。
+  - 取得できない / 検証に通らない場合は、保存済みのCSVを使います。
+    そのときは返り値の df.attrs["stale"] が True になります。
+  - 保存は一時ファイルに書いてから置き換えるので、途中で失敗しても元のファイルは壊れません。
+"""
+
 import io
+import os
+
 import pandas as pd
 import requests
 
@@ -9,15 +22,21 @@ CSV_URLS = [
     "https://www.mk-mode.com/rails/loto/LOTO7.csv",
 ]
 
-CSV_FILE = "loto7_data.csv"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CSV_FILE = os.path.join(BASE_DIR, "loto7_data.csv")
+
+MAIN_COLS = [f"本数字{i}" for i in range(1, 8)]
+BONUS_COLS = ["ボーナス1", "ボーナス2"]
+MIN_ROWS = 100   # これより少ない件数は異常とみなす
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
 
 
-def fetch_data():
+def _fetch_remote():
+    """mk-mode.com からCSVを取得して整形したDataFrameを返す。失敗したらNone。保存はしない。"""
     print("mk-mode.com から LOTO7_ALL.csv を直接取得中...")
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
 
     df_raw = None
     successful_url = None
@@ -25,7 +44,7 @@ def fetch_data():
     for url in CSV_URLS:
         print(f"試行中: {url} ...", end=" ")
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = requests.get(url, headers=HEADERS, timeout=10)
             if res.status_code == 200:
                 # 文字コード判定（UTF-8-SIG または Shift-JIS）
                 content = res.content
@@ -44,8 +63,8 @@ def fetch_data():
         except Exception as e:
             print(f"-> エラー: {e}")
 
-    if df_raw is None:
-        print("\n[エラー] CSVファイルの取得に失敗しました。")
+    if df_raw is None or df_raw.empty:
+        print("\n[警告] CSVファイルの取得に失敗しました。")
         return None
 
     print(f"\n取得成功URL: {successful_url}")
@@ -98,19 +117,88 @@ def fetch_data():
             })
 
     df = pd.DataFrame(records)
+    if df.empty or "回数" not in df.columns:
+        print("[警告] 取得したCSVから有効な行を読み取れませんでした。")
+        return None
 
     # 回数整形＆ソート
     df["回数"] = pd.to_numeric(df["回数"], errors="coerce")
     df = df.dropna(subset=["回数"]).drop_duplicates(subset=["回数"])
     df = df.sort_values(by="回数", ascending=True).reset_index(drop=True)
     df["回数"] = df["回数"].astype(int)
-
-    # 保存
-    df.to_csv(CSV_FILE, index=False, encoding="utf-8-sig")
-    print(f"\n成功: 全{len(df)}件のデータを '{CSV_FILE}' に保存しました！")
-    print(f"取得範囲: 第{df['回数'].min()}回 〜 第{df['回数'].max()}回")
-
     return df
+
+
+def _validate(df, local):
+    """取得データを保存してよいか検証する。戻り値: (OKか, 理由)"""
+    need = ["回数", "抽選日"] + MAIN_COLS + BONUS_COLS
+    missing = [c for c in need if c not in df.columns]
+    if missing:
+        return False, f"列が不足しています: {missing}"
+    if len(df) < MIN_ROWS:
+        return False, f"件数が少なすぎます({len(df)}件)"
+    if local is not None and len(df) < len(local):
+        return False, f"保存済みより件数が少ないです({len(df)}件 < {len(local)}件)"
+
+    first, last = int(df["回数"].min()), int(df["回数"].max())
+    if list(df["回数"]) != list(range(first, last + 1)):
+        return False, "回数が連番になっていません"
+
+    for _, row in df.iterrows():
+        try:
+            nums = [int(row[c]) for c in MAIN_COLS]
+            bonus = [int(row[c]) for c in BONUS_COLS]
+        except (ValueError, TypeError):
+            return False, f"第{row['回数']}回の数字(本数字・ボーナス)を数値として読めません"
+        if len(set(nums)) != 7 or any(not 1 <= n <= 37 for n in nums):
+            return False, f"第{row['回数']}回の本数字が不正です: {nums}"
+        if len(set(nums + bonus)) != 9 or any(not 1 <= n <= 37 for n in bonus):
+            return False, f"第{row['回数']}回のボーナス数字が不正です: {bonus}"
+    return True, "OK"
+
+
+def _load_local():
+    """保存済みCSVを、取得直後と同じ形(番号は文字列、回数は整数)で読む。なければNone。"""
+    if not os.path.exists(CSV_FILE):
+        return None
+    try:
+        df = pd.read_csv(CSV_FILE, encoding="utf-8-sig", dtype=str)
+        df["回数"] = df["回数"].astype(int)
+        return df
+    except Exception as e:
+        print(f"[警告] 保存済みCSVを読み込めませんでした: {e}")
+        return None
+
+
+def _save_atomic(df):
+    tmp = CSV_FILE + ".tmp"
+    df.to_csv(tmp, index=False, encoding="utf-8-sig")
+    os.replace(tmp, CSV_FILE)
+
+
+def fetch_data():
+    local = _load_local()
+    remote = _fetch_remote()
+
+    if remote is not None:
+        ok, reason = _validate(remote, local)
+        if ok:
+            try:
+                _save_atomic(remote)
+                print(f"\n成功: 全{len(remote)}件のデータを '{os.path.basename(CSV_FILE)}' に保存しました！")
+            except OSError as e:
+                print(f"[警告] CSVを保存できませんでした(取得したデータはこのまま使います): {e}")
+            print(f"取得範囲: 第{remote['回数'].min()}回 〜 第{remote['回数'].max()}回")
+            return remote
+        print(f"[警告] 取得したデータが検証を通りませんでした: {reason}")
+
+    if local is not None:
+        print(f"[警告] 保存済みのデータ(第{int(local['回数'].max())}回まで)を使います。")
+        local.attrs["stale"] = True
+        return local
+
+    print("[エラー] データを取得できず、保存済みのデータもありません。")
+    return None
 
 
 if __name__ == "__main__":

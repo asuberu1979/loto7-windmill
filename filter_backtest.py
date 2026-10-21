@@ -34,8 +34,7 @@ def extract_winning_numbers(row):
 # 1. 統計フィルター条件の定義
 # ==========================================
 
-# 変更前: min_sum=100, max_sum=150
-# 変更後: 95〜165 に微調整
+# 現在の設定: 合計 90〜170 (関数の既定値と、下の表示ラベルを揃えてある)
 def is_sum_in_range(numbers, min_sum=90, max_sum=170):
     """【和の範囲】 7つの数字の合計が90〜170の範囲内か"""
     return min_sum <= sum(numbers) <= max_sum
@@ -104,7 +103,7 @@ def run_filter_backtest(past_trials=100):
         if c_hl: pass_high_low += 1
         if c_all: pass_all += 1
         
-    print(f"1. 和の範囲 (100〜150)        : {pass_sum:3d} / {total} 回合格 ({pass_sum/total*100:.1f}%)")
+    print(f"1. 和の範囲 (90〜170)         : {pass_sum:3d} / {total} 回合格 ({pass_sum/total*100:.1f}%)")
     print(f"2. 奇偶バランス (3:4, 4:3等)   : {pass_odd_even:3d} / {total} 回合格 ({pass_odd_even/total*100:.1f}%)")
     print(f"3. 連続数制限 (3連番以上除外)  : {pass_consec:3d} / {total} 回合格 ({pass_consec/total*100:.1f}%)")
     print(f"4. 高低バランス (18以下/19以上): {pass_high_low:3d} / {total} 回合格 ({pass_high_low/total*100:.1f}%)")

@@ -76,7 +76,7 @@ class Loto7Analyzer:
         if odds in [0, 7]:
             return False, "奇数偶数の偏りすぎ"
 
-        # 合計値チェック（標準範囲 110〜160）
+        # 合計値チェック（標準範囲 100〜170）
         total = sum(nums)
         if not (100 <= total <= 170):
             return False, f"合計値異常 ({total})"
