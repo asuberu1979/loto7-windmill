@@ -6,3 +6,4 @@ prediction_issue_*.txt
 # 環境変数（念のため設定）
 .env
 archive/
+archive/
