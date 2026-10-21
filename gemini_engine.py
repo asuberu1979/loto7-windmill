@@ -57,6 +57,7 @@ def call_openrouter(model_id, system_prompt, user_prompt, api_key):
     }
     payload = {
         "model": model_id,
+        "max_tokens": 4000,  # ← この1行を追加して出力上限を適切に抑えます
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
